@@ -5,8 +5,10 @@ import matplotlib.pyplot as plt
 
 class Chromosome:
 
-    def __init__(self, start, end, length, *args, **kwargs):
-        self._metadata = np.random.uniform(low=start, high=end, size=length)
+    def __init__(self, incognitos_limits, *args, **kwargs):
+        self._metadata = np.array(
+            [round(np.random.uniform(low=start, high=end), kwargs.get('precision')) for _, (start, end) in
+             incognitos_limits.items()])
         self.system_equation = kwargs.get('system_equation')
         self.fitness = self.fitness_process()
 
@@ -30,22 +32,23 @@ class Chromosome:
 
 class GenerationProcess:
 
-    def __init__(self, equation_schema, start, end, length, *args, **kwargs):
+    def __init__(self, equation_schema, incognitos_limits, *args, **kwargs):
         self.equation_schema = equation_schema
-        self.start = start
-        self.end = end
-        self.length = length
+        self.incognitos_limits = incognitos_limits
+        self.length = len(incognitos_limits.keys())
+        self.position_incognitos = {index: val for index, val in enumerate(incognitos_limits.keys(), start=0)}
         self.generation_number = kwargs.get('number_generations')
         self.percentage_crossover = kwargs.get('percentage_crossover')
         self.percentage_mutation = kwargs.get('percentage_mutation')
         self.elitism_number = kwargs.get('elitism_number')
+        self.precision_global = kwargs.get('global_precision')
+
         self.generation = None
 
     def generate_generation(self, descendants=None):
-        self.generation = [Chromosome(self.start,
-                                      self.end,
-                                      self.length,
-                                      system_equation=self.generate_numpy_object_equation())
+        self.generation = [Chromosome(self.incognitos_limits,
+                                      system_equation=self.generate_numpy_object_equation(),
+                                      precision=self.precision_global)
                            for _ in range(self.generation_number)]
         return self.generation
 
@@ -112,10 +115,11 @@ class GenerationProcess:
         # If the percentage is less than the percentage mutation defined the operator is going to be applied
         if can_mutate < self.percentage_mutation:
             # Select the gene that is going to be mutated
-            index_to_mutate = np.random.randint(1, self.length)
-
+            index_to_mutate = np.random.randint(0, self.length)
+            incognito_key = self.position_incognitos.get(index_to_mutate)
             # Generate the new data that gonna mutated the gene in the descendant
-            new_data = np.random.uniform(self.start, self.end)
+            new_data = round(np.random.uniform(low=self.incognitos_limits.get(incognito_key)[0],
+                                               high=self.incognitos_limits.get(incognito_key)[1]), self.precision_global)
 
             # A descendant is selected randomly to apply the mutation
             descendant_to_mutate = np.random.choice([descendant_one, descendant_two])
@@ -134,14 +138,16 @@ class GenerationProcess:
 
 class Equation:
 
-    def __init__(self, start, end,
-                 incognito_number,
+    def __init__(self, incognitos_limits,
                  equation_object,
                  number_generations,
                  percentage_crossover,
                  percentage_mutation,
-                 number_elitism):
-
+                 number_elitism,
+                 precision_point_stop,
+                 global_precision):
+        self.global_precision = global_precision
+        self.stop_point = precision_point_stop
         self.generation_number = number_generations
         self.number_elitism = number_elitism
         self.incognitos = equation_object[0].keys()
@@ -149,15 +155,14 @@ class Equation:
         self.equation_schema = equation_object
 
         self.incognitos_result = {}
-        self.historial_best_solutiions = []
+        self.historian_best_solutions = []
         self.generation = GenerationProcess(equation_object,
-                                            start,
-                                            end,
-                                            incognito_number,
+                                            incognitos_limits,
                                             number_generations=number_generations,
                                             percentage_crossover=percentage_crossover,
                                             percentage_mutation=percentage_mutation,
-                                            elitism_number=elitism_number)
+                                            elitism_number=number_elitism,
+                                            global_precision=global_precision)
 
     def solve(self):
 
@@ -193,7 +198,12 @@ class Equation:
 
             dominant_solution = self.generation.dominant_solution()
             print("Best local fitness {} : fitness {}".format(dominant_solution.metadata, dominant_solution.fitness))
-            self.historial_best_solutiions.append(dominant_solution.fitness)
+            self.historian_best_solutions.append(dominant_solution.fitness)
+
+            if round(dominant_solution.fitness, 3) < self.stop_point:
+                print("BREAKPOINT OPTIMAL SOLUTION FOUND")
+                break
+
         print("---------------------- BEST SOLUTION FOUND OVER THE ITERATIONS -------------------------------")
         dominant_solution = self.generation.dominant_solution()
         print("Best local fitness {} : fitness {}".format(dominant_solution.metadata, dominant_solution.fitness))
@@ -204,7 +214,7 @@ class Equation:
         error_result = (abs(self.undefined_values - result) / self.undefined_values) * 100
 
         for incognito, solution in zip(self.incognitos, dominant_solution.metadata):
-            self.incognitos_result[incognito.upper()] = round(solution, 4)
+            self.incognitos_result[incognito.upper()] = round(solution, self.global_precision)
             print('{} : {}'.format(incognito, solution))
 
         for data, solution_equation, error in zip(self.equation_schema, list(result), error_result):
@@ -212,16 +222,17 @@ class Equation:
             _equation.pop('ind_term')
             string_equation = '{}'
             for var, value in _equation.items():
-                actual_val = '{}({}){}'.format('+{}'.format(round(value, 4)) if value > 0 else round(value, 4),
-                                               self.incognitos_result.get(var.upper()),
-                                               '{}')
+                actual_val = '{}({}){}'.format(
+                    '+{}'.format(round(value, self.global_precision)) if value > 0 else round(value, self.global_precision),
+                    self.incognitos_result.get(var.upper()),
+                    '{}')
                 string_equation = string_equation.format(actual_val)
-            print("---- EQUATION ------ Error :  {}% ------- ".format(round(error, 4)))
-            string_equation = string_equation.format(' = {}'.format(round(solution_equation, 4)))
+            print("---- EQUATION ------ Error :  {}% ------- ".format(round(error, self.global_precision)))
+            string_equation = string_equation.format(' = {}'.format(round(solution_equation, self.global_precision)))
 
             print(string_equation)
 
-            plt.plot(self.historial_best_solutiions)
+            plt.plot(self.historian_best_solutions)
             plt.title("Evolution")
             plt.show()
 
@@ -232,43 +243,3 @@ class Equation:
             individual_equation.pop('ind_term')
             new_schema.append(list(individual_equation.values()))
         return np.array(new_schema)
-
-
-if __name__ == "__main__":
-    # Define base parameters
-    generation_number = 3000
-
-    # Elitism number : This allow to select N amount of chromosomes from generation to pass the next
-    elitism_number = 500
-
-    # Limits of the possible solution
-    start_solution = 0
-    end_solution = 3
-    number_incognitos = 4
-
-    crossover_percentage = 0.9
-    mutation_percentage = 0.3
-
-    equation_ = [{'x': 3, 'y': 8, 'z': 2, 'ind_term': 25},
-                 {'x': 1, 'y': -2, 'z': 4, 'ind_term': 12},
-                 {'x': -5, 'y': 3, 'z': 11, 'ind_term': 4}]
-
-    equation__ = [{'A': 16.98, 'P': 9, 'V': 9, 'ind_term': 138900},
-                  {'A': 15.9, 'P': 8.72, 'V': 8.52, 'ind_term': 131220},
-                  {'A': 14.08, 'P': 8.2, 'V': 8.76, 'ind_term': 121280}]
-
-    equation = [{'x1': 1, 'x2': -1, 'x3': 1, 'x4': 1, 'ind_term': 4},
-                {'x1': 2, 'x2': 1, 'x3': -3, 'x4': 1, 'ind_term': 4},
-                {'x1': 1, 'x2': -2, 'x3': 2, 'x4': -1, 'ind_term': 3},
-                {'x1': 1, 'x2': -3, 'x3': 3, 'x4': -3, 'ind_term': 2}]
-
-    equation_problem = Equation(start_solution,
-                                end_solution,
-                                number_incognitos,
-                                equation,
-                                generation_number,
-                                crossover_percentage,
-                                mutation_percentage,
-                                elitism_number)
-
-    equation_problem.solve()
